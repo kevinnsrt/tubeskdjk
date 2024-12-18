@@ -3,12 +3,13 @@ import threading
 import os
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, filedialog
+import re
 
 UPLOAD_FOLDER = 'server_files'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 class ChatServer:
-    def __init__(self, host='127.0.0.1', port=5000):
+    def __init__(self, host='192.168.216.110', port=5000):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -60,9 +61,20 @@ class ChatServer:
         """Menangani proses upload file dengan lebih baik"""
         try:
             # Terima informasi file
-            file_info = client_socket.recv(1024).decode('utf-8')
-            filename, filesize = file_info.split('|')
-            filesize = int(filesize)
+            file_info = client_socket.recv(1024).decode('utf-8').strip()
+
+            # Validasi input file_info
+            if '|' not in file_info:
+                raise ValueError("Format informasi file tidak valid")
+
+            filename, filesize_str = file_info.split('|')
+
+            # Menggunakan regex untuk memisahkan angka dari teks pada ukuran file
+            match = re.match(r"(\d+)(\D*)", filesize_str)  # (\d+) untuk angka, (\D*) untuk teks
+            if not match:
+                raise ValueError(f"Ukuran file '{filesize_str}' tidak valid, harus berupa angka diikuti nama file")
+
+            filesize = int(match.group(1))  # Mengambil angka dari hasil regex
 
             # Konfirmasi siap menerima file
             client_socket.send("READY".encode('utf-8'))
@@ -77,8 +89,8 @@ class ChatServer:
                 counter += 1
 
             # Terima file
+            bytes_received = 0
             with open(filepath, 'wb') as f:
-                bytes_received = 0
                 while bytes_received < filesize:
                     data = client_socket.recv(4096)
                     if not data:
@@ -89,6 +101,10 @@ class ChatServer:
             self.log(f"File diterima: {filename} dari {name}")
             client_socket.send(f"File {filename} berhasil diunggah".encode('utf-8'))
             return filename
+        except ValueError as ve:
+            self.log(f"Error: {ve}")
+            client_socket.send(f"Gagal: {ve}".encode('utf-8'))
+            return None
         except Exception as e:
             self.log(f"Error upload file: {e}")
             client_socket.send("Gagal mengunggah file".encode('utf-8'))
@@ -153,16 +169,6 @@ class ChatServer:
                             if client_name != name:
                                 client.send(f"File baru: {uploaded_filename} diunggah oleh {name}".encode('utf-8'))
 
-                elif message == "DOWNLOAD":
-                    # Request nama file untuk download
-                    filename = client_socket.recv(1024).decode('utf-8')
-                    self.handle_file_download(client_socket, filename)
-
-                elif message == "LIST_FILES":
-                    # Kirim daftar file yang tersedia
-                    available_files = os.listdir(UPLOAD_FOLDER)
-                    file_list = "|".join(available_files)
-                    client_socket.send(file_list.encode('utf-8'))
 
                 elif message == "!group":
                     # Tambahkan klien ke grup
